@@ -220,12 +220,18 @@ class GPTImageProcessor(SimilarityProcessor):
 
 
 class LLaVAImageProcessor(SimilarityProcessor):
-    """Processor for vLLM-deployed LLaVA vision model."""
+    """Processor for vLLM-deployed LLaVA vision model.
+
+    Supports two modes:
+    - Direct OpenAI-compatible API (USE_LITELLM=False): Uses OpenAI client with custom base_url
+    - LiteLLM (USE_LITELLM=True): Uses litellm.completion() for unified API access
+    """
 
     def __init__(self, dataset, client, model_name):
         super().__init__(dataset, client, None)
         self.model_name = model_name
         self.text2idx2result = dict()
+        self.use_litellm = config_tdb.USE_LITELLM
         if config_tdb.GUI:
             self.progress_bar = None
 
@@ -242,6 +248,45 @@ class LLaVAImageProcessor(SimilarityProcessor):
         img_path = self.dataset.img_paths[idx]
         with open(img_path, "rb") as image_file:
             return base64.b64encode(image_file.read()).decode("utf-8")
+
+    def _call_model(self, prompt, base64_img):
+        """Call the model using either LiteLLM or direct OpenAI-compatible API."""
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": prompt,
+                    },
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:image/jpeg;base64,{base64_img}",
+                        },
+                    },
+                ],
+            }
+        ]
+
+        if self.use_litellm:
+            # Use LiteLLM for unified API access
+            import litellm
+            response = litellm.completion(
+                model=config_tdb.LITELLM_MODEL_NAME,
+                messages=messages,
+                max_tokens=1,
+                api_base=config_tdb.VLLM_BASE_URL,
+                api_key=config_tdb.VLLM_API_KEY,
+            )
+        else:
+            # Use direct OpenAI-compatible API
+            response = self.model.chat.completions.create(
+                model=self.model_name,
+                messages=messages,
+                max_tokens=1,
+            )
+        return response
 
     def compute_scores(self, text, idxs_to_process):
         """Process new images using LLaVA and return a mapping from image index to score.
@@ -273,27 +318,7 @@ class LLaVAImageProcessor(SimilarityProcessor):
             else:
                 prompt = f'Does the following text describe the image? "{text}"\nAnswer with only a single digit: 1 for Yes, 0 for No.'
                 base64_img = self.encode_image(idx)
-                response = self.model.chat.completions.create(
-                    model=self.model_name,
-                    messages=[
-                        {
-                            "role": "user",
-                            "content": [
-                                {
-                                    "type": "text",
-                                    "text": prompt,
-                                },
-                                {
-                                    "type": "image_url",
-                                    "image_url": {
-                                        "url": f"data:image/jpeg;base64,{base64_img}",
-                                    },
-                                },
-                            ],
-                        }
-                    ],
-                    max_tokens=1,
-                )
+                response = self._call_model(prompt, base64_img)
                 print(response)
                 # Parse result - LLaVA may return "0", "1", or text like "Yes"/"No"
                 content = response.choices[0].message.content.strip()
