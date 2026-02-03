@@ -7,7 +7,7 @@ import duckdb
 
 import config_tdb
 from datatype import AudioDataset, ImageDataset, DataType
-from nlfilter import GPTImageProcessor, GPTTextProcessor, ImageProcessor, TextProcessor, AudioProcessor
+from nlfilter import GPTImageProcessor, GPTTextProcessor, ImageProcessor, TextProcessor, AudioProcessor, LLaVAImageProcessor
 from repository import ModelRepository
 from schema import NLDatabase, NLTable, NLColumn
 
@@ -105,7 +105,11 @@ def craigslist():
     img_paths = df_images["img"]
     t = transforms.Compose([transforms.ToPILImage()])
     dataset = ImageDataset(img_paths, t)
-    if config_tdb.GUI:
+    if config_tdb.USE_VLLM:
+        # Use vLLM-deployed LLaVA vision model
+        client = repository.get_vllm_client()
+        processor = LLaVAImageProcessor(dataset, client, config_tdb.VLLM_MODEL_NAME)
+    elif config_tdb.GUI:
         model = repository.get_gpt_model()
         processor = GPTImageProcessor(dataset, model)
     else:

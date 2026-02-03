@@ -219,6 +219,101 @@ class GPTImageProcessor(SimilarityProcessor):
         return idx_to_score
 
 
+class LLaVAImageProcessor(SimilarityProcessor):
+    """Processor for vLLM-deployed LLaVA vision model."""
+
+    def __init__(self, dataset, client, model_name):
+        super().__init__(dataset, client, None)
+        self.model_name = model_name
+        self.text2idx2result = dict()
+        if config_tdb.GUI:
+            self.progress_bar = None
+
+    def get_item(self, idx):
+        img, _ = self.dataset[idx]
+        return img
+
+    def show(self, idx):
+        img = self.get_item(idx)
+        plt.imshow(img)
+        plt.show()
+
+    def encode_image(self, idx):
+        img_path = self.dataset.img_paths[idx]
+        with open(img_path, "rb") as image_file:
+            return base64.b64encode(image_file.read()).decode("utf-8")
+
+    def compute_scores(self, text, idxs_to_process):
+        """Process new images using LLaVA and return a mapping from image index to score.
+        Iterate based on the given input indexes."""
+        if config_tdb.GUI:
+            display_item = st.empty()
+        if text not in self.text2idx2result:
+            self.text2idx2result[text] = {}
+        idx_to_score = {}
+        for idx in idxs_to_process:
+            if config_tdb.GUI:
+                item = self.dataset[idx][0]
+                with display_item.container():
+                    st.write(f"Image Item Being Processed (See Below):")
+                    st.image(item)
+                if self.progress_bar:
+                    self.progress_bar.progress(
+                        st.session_state["nr_requests"]
+                        / st.session_state["total_nr_requests"],
+                        text=st.session_state["progress_text"],
+                    )
+                    if (
+                        st.session_state["nr_requests"]
+                        < st.session_state["total_nr_requests"] - 1
+                    ):
+                        st.session_state["nr_requests"] += 1
+            if idx in self.text2idx2result[text]:
+                idx_to_score[idx] = self.text2idx2result[text][idx]
+            else:
+                prompt = f'Does the following text describe the image? "{text}"\nAnswer with only a single digit: 1 for Yes, 0 for No.'
+                base64_img = self.encode_image(idx)
+                response = self.model.chat.completions.create(
+                    model=self.model_name,
+                    messages=[
+                        {
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": prompt,
+                                },
+                                {
+                                    "type": "image_url",
+                                    "image_url": {
+                                        "url": f"data:image/jpeg;base64,{base64_img}",
+                                    },
+                                },
+                            ],
+                        }
+                    ],
+                    max_tokens=1,
+                )
+                print(response)
+                # Parse result - LLaVA may return "0", "1", or text like "Yes"/"No"
+                content = response.choices[0].message.content.strip()
+                if content in ("1", "Yes", "yes", "YES"):
+                    result = 1
+                elif content in ("0", "No", "no", "NO"):
+                    result = 0
+                else:
+                    # Try to extract digit from response
+                    try:
+                        result = int(content[0]) if content[0].isdigit() else 0
+                    except (ValueError, IndexError):
+                        result = 0
+                idx_to_score[idx] = result
+                self.text2idx2result[text][idx] = result
+        if config_tdb.GUI:
+            display_item.empty()
+        return idx_to_score
+
+
 class GPTTextProcessor(SimilarityProcessor):
     def __init__(self, dataset, model):
         super().__init__(dataset, model, None)

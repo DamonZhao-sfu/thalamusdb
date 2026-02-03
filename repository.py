@@ -41,6 +41,15 @@ class ModelRepository:
         return self.models['audio']
     
     def get_gpt_model(self):
-        if 'image' not in self.models:
-            self.models['image'] = OpenAI()
-        return self.models['image']
+        if 'gpt' not in self.models:
+            self.models['gpt'] = OpenAI()
+        return self.models['gpt']
+
+    def get_vllm_client(self):
+        """Get OpenAI-compatible client for vLLM server."""
+        if 'vllm' not in self.models:
+            self.models['vllm'] = OpenAI(
+                base_url=config_tdb.VLLM_BASE_URL,
+                api_key=config_tdb.VLLM_API_KEY,
+            )
+        return self.models['vllm']
